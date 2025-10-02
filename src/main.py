@@ -3,6 +3,8 @@ import json
 import google.generativeai as genai
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from google.cloud import vision
+from fastapi.middleware.cors import CORSMiddleware
+
 
 try:
     GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
@@ -14,6 +16,14 @@ app = FastAPI(
     title="Corretor de Redação ENEM com IA",
     description="API que recebe a foto de uma redação, extrai o texto e a corrige usando o Gemini.",
     version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permite conexões de qualquer origem/endereço
+    allow_credentials=True,
+    allow_methods=["*"],  # Permite todos os métodos (POST, GET, etc)
+    allow_headers=["*"],  # Permite todos os cabeçalhos
 )
 
 PROMPT_ENEM_CORRECTOR = """
