@@ -1,5 +1,22 @@
+# Ferramentas de build - Essencial para evitar erros de instalação com pacotes antigos
+setuptools
+wheel
+
+# Dependências da aplicação principal
 fastapi
 uvicorn
 python-multipart
 google-generativeai
 google-cloud-vision
+
+# Dependências do LangChain e ChromaDB
+langchain
+langchain-google-genai
+langchain-chroma
+langchain-community
+chromadb
+
+# Dependências para carregar documentos (loaders)
+pypdf
+unstructured
+python-pptx
