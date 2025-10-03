@@ -57,7 +57,16 @@ vector_store = Chroma(
 
 # --- Lógica da Aplicação ---
 def process_and_store_document(filepath: str, original_filename: str):
-    """Carrega, processa e armazena o documento no ChromaDB."""
+    """Carrega, processa e armazena o documento no ChromaDB, garantindo que não haja duplicatas."""
+    
+    # 1. Buscar os documentos existentes com base no nome do arquivo no metadado.
+    existing_docs = vector_store.get(where={"source": original_filename})
+    
+    # 2. Se a busca retornar IDs, significa que o documento já existe e precisa ser removido antes de adicionar a nova versão.
+    if existing_docs and existing_docs["ids"]:
+        vector_store.delete(ids=existing_docs["ids"])
+
+    # 3. Carregar e processar o novo documento.
     if original_filename.endswith(".pdf"):
         loader = PyPDFLoader(filepath)
     elif original_filename.endswith((".pptx", ".ppt")):
@@ -69,7 +78,11 @@ def process_and_store_document(filepath: str, original_filename: str):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     docs = text_splitter.split_documents(documents)
 
-    # Adiciona os documentos processados à coleção existente
+    # 4. Adicionar metadados a cada chunk para rastrear a origem.
+    for doc in docs:
+        doc.metadata = {"source": original_filename}
+
+    # 5. Adicionar os novos chunks processados ao banco de dados.
     vector_store.add_documents(docs)
 
 
@@ -112,21 +125,25 @@ async def query_documents(request: QueryRequest):
 
     # Template do prompt para guiar o modelo
     prompt_template = ChatPromptTemplate.from_template("""
-    Persona: Você é um tutor de IA. Sua única função é ensinar usando apenas o conteúdo dos documentos fornecidos.
+    Persona: Você é um tutor de IA, amigável e didático. Sua única função é ensinar usando estritamente o conteúdo dos documentos fornecidos.
 
-    Regra Principal: Sua única fonte de verdade é o material fornecido. Não use nenhum conhecimento externo. Se a resposta não estiver no material, diga isso claramente, mas sempre dentro do formato HTML.
+    Regra Principal: Sua única fonte de verdade é o material fornecido no "Contexto". Não use nenhum conhecimento externo. Se a resposta não estiver no material, diga isso claramente.
 
-    Formato de Saída OBRIGATÓRIO:
-    Sua resposta deve ser APENAS código HTML, sem nenhuma outra palavra ou texto antes ou depois. Use a seguinte estrutura:
-    Um div principal com a classe resposta-tutor para conter tudo.
-    Um cabeçalho <h3> para o título principal da explicação.
-    Parágrafos <p> para o texto explicativo.
-    Use <ul> e <li> para listas de itens ou passos.
-    Use <b> ou <strong> para destacar termos importantes.
-    Não inclua as tags <html> ou <body>. Comece diretamente com o div.
+    Instruções:
+    1.  Analise todo o "Contexto" abaixo, que pode conter vários trechos do material.
+    2.  Sintetize uma resposta coesa a partir desses trechos.
+    3.  Use uma linguagem clara e educativa, como um professor faria.
+    4.  Siga OBRIGATORIAMENTE o formato de saída HTML.
+
+    Formato de Saída OBRIGATÓRIO (Apenas HTML):
+    Sua resposta deve ser APENAS código HTML. Comece diretamente com a tag <div> e não inclua `<html>` ou `<body>`.
+    -   Use `<div class="resposta-tutor">` como contêiner principal.
+    -   Use `<h3>` para o título principal da explicação.
+    -   Use `<p>` para o texto explicativo.
+    -   Use `<ul>` e `<li>` para listas.
+    -   Use `<b>` ou `<strong>` para destacar termos importantes.
 
     Exemplo de Resposta para uma Pergunta:
-                                                       
     <div class="resposta-tutor">
         <h3>O Processo de Mitose</h3>
         <p>Com base no material, a mitose é um processo fundamental de <b>divisão celular</b> que resulta em duas células-filhas geneticamente idênticas.</p>
@@ -134,16 +151,13 @@ async def query_documents(request: QueryRequest):
         <ul>
             <li><b>Prófase:</b> Os cromossomos se condensam.</li>
             <li><b>Metáfase:</b> Os cromossomos se alinham no centro.</li>
-            <li><b>Anáfase:</b> As cromátides-irmãs são separadas.</li>
-            <li><b>Telófase:</b> Formam-se novos núcleos.</li>
         </ul>
     </div>
-                                                       
+
     Exemplo de Resposta Quando a Informação Não é Encontrada:
-                                                       
     <div class="resposta-tutor">
         <h3>Informação Não Encontrada</h3>
-        <p>Consultei todo o material disponível, mas não encontrei uma resposta para a sua pergunta. O conteúdo aborda outros tópicos. Por favor, faça outra pergunta relacionada ao material.</p>
+        <p>Consultei todo o material disponível, mas não encontrei uma resposta para sua pergunta. Por favor, tente reformular a pergunta ou questione sobre um tópico abordado no documento.</p>
     </div>
 
     Contexto:
@@ -152,7 +166,7 @@ async def query_documents(request: QueryRequest):
     Pergunta do Usuário:
     {input}
 
-    Resposta concisa e direta:
+    Sua resposta em HTML:
     """)
 
     # Criação da cadeia de documentos e da cadeia de recuperação
