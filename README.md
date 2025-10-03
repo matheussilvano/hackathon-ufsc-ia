@@ -89,43 +89,7 @@ O módulo Sinapse implementa uma pipeline clássica e eficiente de **Retrieval-A
 
 ## 5. Como Executar o Projeto
 
-#### Pré-requisitos
-- Python 3.9+
-- Um navegador web moderno (Chrome, Firefox, etc.)
-- Chaves de API para o **Google AI (Gemini)** e credenciais para o **Google Cloud Vision**.
-
-#### 1. Configuração do Backend
-```bash
-# 1. Clone o repositório
-git clone <URL_DO_REPOSITORIO>
-cd <NOME_DA_PASTA>
-
-# 2. Crie e ative um ambiente virtual
-python -m venv venv
-source venv/bin/activate  # No Windows: venv\Scripts\activate
-
-# 3. Instale as dependências
-pip install -r requirements.txt # (Crie um requirements.txt com as bibliotecas dos arquivos .py)
-
-# 4. Configure as variáveis de ambiente
-# Crie um arquivo .env na raiz do projeto ou configure as variáveis no seu sistema
-export GEMINI_API_KEY="SUA_CHAVE_API_GEMINI"
-export GOOGLE_APPLICATION_CREDENTIALS="/caminho/para/seu/arquivo-de-credenciais.json"
-
-# 5. Rode o servidor FastAPI
-uvicorn main:app --reload
-
-A API estará rodando em http://127.0.0.1:8000.
-```
-
-### 2. Configuração do Frontend
-```bash
-Abra o arquivo index.html diretamente no seu navegador.
-
-Na interface da aplicação, no canto superior direito, insira a URL da sua API local (http://127.0.0.1:8000) no campo "URL da API" e clique em "Salvar".
-
-A aplicação está pronta para ser usada!
-```
+Execute o projeto em: https://front-end-hackathon-zeta.vercel.app/
 
 ## 6. Autores
 Desenvolvido por Matheus Silvano, Bernardo Thomas e Igor do Carmo
