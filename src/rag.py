@@ -1,126 +1,116 @@
 import os
 import shutil
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 
-# Importações do Langchain e Google
+# --- Importações do Langchain, ChromaDB e Google ---
+import chromadb
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
-from langchain.vectorstores.chroma import Chroma
+from langchain_chroma import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.document_loaders import PyPDFLoader, UnstructuredPowerPointLoader
+from langchain_community.document_loaders import PyPDFLoader, UnstructuredPowerPointLoader
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
+from langchain.chains import create_retrieval_chain
 
-# --- Configuração da API Key do Google ---
+# --- Configuração do Roteador ---
+router = APIRouter()
+
+# --- Configuração da API Key ---
 try:
-    api_key = os.environ["GOOGLE_API_KEY"]
+    gemini_api_key = os.environ["GEMINI_API_KEY"]
 except KeyError:
-    # Se a variável de ambiente não estiver definida, pare a execução.
-    raise EnvironmentError("A variável de ambiente GOOGLE_API_KEY não foi encontrada. Configure sua API key.")
+    raise EnvironmentError("A variável de ambiente GEMINI_API_KEY não foi encontrada. Configure sua API key.")
 
 # --- Constantes e Configurações Globais ---
-CHROMA_PERSIST_DIR = "chroma_db"
+CHROMA_PERSIST_DIR = "chroma_db_persistent"
+CHROMA_COLLECTION_NAME = "ufsc_hackathon_rag"
 TEMP_UPLOAD_DIR = "temp_uploads"
 
-# --- Inicialização do FastAPI ---
-app = FastAPI(
-    title="API de RAG com Gemini",
-    description="Faça upload de documentos e faça perguntas sobre eles.",
-    version="1.0.0"
-)
-
-# --- Modelos de Dados (Pydantic) para Request/Response ---
+# --- Modelos de Dados (Pydantic) ---
 class QueryRequest(BaseModel):
     question: str
 
 class QueryResponse(BaseModel):
     answer: str
-    
+
 class UploadResponse(BaseModel):
     message: str
     filename: str
 
-# --- Lógica da API ---
+# --- Inicialização do Cliente ChromaDB e Embeddings ---
+# Garante que o diretório de persistência exista
+os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
 
+# Cliente ChromaDB persistente para garantir que os dados sejam salvos localmente
+persistent_client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
+
+# Modelo de embeddings que será usado tanto para armazenar quanto para consultar
+embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=gemini_api_key)
+
+# Instância principal do Chroma que será usada pela aplicação
+vector_store = Chroma(
+    client=persistent_client,
+    collection_name=CHROMA_COLLECTION_NAME,
+    embedding_function=embeddings,
+)
+
+# --- Lógica da Aplicação ---
 def process_and_store_document(filepath: str, original_filename: str):
-    """Carrega, processa e armazena um documento no ChromaDB."""
-    
-    # Escolhe o loader correto com base na extensão
+    """Carrega, processa e armazena o documento no ChromaDB."""
     if original_filename.endswith(".pdf"):
         loader = PyPDFLoader(filepath)
-    elif original_filename.endswith(".pptx"):
+    elif original_filename.endswith((".pptx", ".ppt")):
         loader = UnstructuredPowerPointLoader(filepath)
     else:
         raise HTTPException(status_code=400, detail="Formato de arquivo não suportado. Use PDF ou PPTX.")
 
     documents = loader.load()
-    
-    # Divide o texto em chunks
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
     docs = text_splitter.split_documents(documents)
-    
-    # Cria embeddings
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    
-    # Conecta ao ChromaDB e adiciona os documentos
-    # Se a coleção já existir, ele adiciona os novos documentos a ela.
-    vector_store = Chroma.from_documents(
-        docs, 
-        embeddings, 
-        persist_directory=CHROMA_PERSIST_DIR
-    )
-    vector_store.persist()
 
-# --- Endpoints da API ---
+    # Adiciona os documentos processados à coleção existente
+    vector_store.add_documents(docs)
 
-@app.post("/upload", response_model=UploadResponse)
+
+# --- Endpoints da API de RAG ---
+@router.post("/upload", response_model=UploadResponse, summary="Upload de Documento")
 async def upload_document(file: UploadFile = File(...)):
-    """
-    Endpoint para fazer upload de um arquivo (PDF ou PPTX).
-    O arquivo é processado e seus dados são armazenados no banco vetorial.
-    """
     if not os.path.exists(TEMP_UPLOAD_DIR):
         os.makedirs(TEMP_UPLOAD_DIR)
-        
+
     temp_filepath = os.path.join(TEMP_UPLOAD_DIR, file.filename)
-    
+
     try:
-        # Salva o arquivo temporariamente
         with open(temp_filepath, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
-        # Processa e armazena o documento
+
         process_and_store_document(temp_filepath, file.filename)
-        
+
     except Exception as e:
+        # Fornece um erro mais detalhado em caso de falha
         raise HTTPException(status_code=500, detail=f"Erro ao processar o arquivo: {str(e)}")
     finally:
-        # Limpa o arquivo temporário
+        # Garante que o arquivo temporário seja sempre removido
         if os.path.exists(temp_filepath):
             os.remove(temp_filepath)
-            
+
     return {"message": "Arquivo processado e armazenado com sucesso.", "filename": file.filename}
 
 
-@app.post("/query", response_model=QueryResponse)
+@router.post("/query", response_model=QueryResponse, summary="Consulta sobre Documentos")
 async def query_documents(request: QueryRequest):
-    """
-    Endpoint para fazer uma pergunta sobre os documentos já enviados.
-    """
-    if not os.path.exists(CHROMA_PERSIST_DIR):
+    # Verifica se a coleção no ChromaDB contém documentos
+    if vector_store._collection.count() == 0:
          raise HTTPException(status_code=404, detail="Nenhum documento foi enviado ainda. Faça o upload primeiro.")
 
-    # Inicializa os modelos
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    llm = ChatGoogleGenerativeAI(model="gemini-pro", temperature=0.3)
-    
-    # Carrega o banco de vetores persistente
-    vector_store = Chroma(persist_directory=CHROMA_PERSIST_DIR, embedding_function=embeddings)
-    
-    # Cria o retriever
-    retriever = vector_store.as_retriever(search_kwargs={"k": 5}) # Busca os 5 chunks mais relevantes
-    
-    # Cria o prompt template
+    # O vector_store já está inicializado, então criamos o retriever diretamente
+    retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+
+    # Modelo de linguagem para gerar as respostas
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.3, google_api_key=gemini_api_key)
+
+    # Template do prompt para guiar o modelo
     prompt_template = ChatPromptTemplate.from_template("""
     Sua tarefa é responder à pergunta do usuário baseando-se estritamente no contexto fornecido.
     Se a resposta não estiver no contexto, diga que não encontrou a informação no documento.
@@ -133,12 +123,12 @@ async def query_documents(request: QueryRequest):
 
     Resposta concisa e direta:
     """)
-    
-    # Cria a chain RAG
+
+    # Criação da cadeia de documentos e da cadeia de recuperação
     document_chain = create_stuff_documents_chain(llm, prompt_template)
-    response = document_chain.invoke({
-        "input": request.question,
-        "context": retriever.get_relevant_documents(request.question)
-    })
-    
-    return {"answer": response}
+    retrieval_chain = create_retrieval_chain(retriever, document_chain)
+
+    # Invocação da cadeia para obter a resposta
+    response = retrieval_chain.invoke({"input": request.question})
+
+    return {"answer": response["answer"]}
