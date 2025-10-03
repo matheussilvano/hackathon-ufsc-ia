@@ -31,8 +31,13 @@ TEMP_UPLOAD_DIR = "temp_uploads"
 class QueryRequest(BaseModel):
     question: str
 
+class SourceDocument(BaseModel):
+    source: str
+    content: str
+
 class QueryResponse(BaseModel):
     answer: str
+    sources: list[SourceDocument]
 
 class UploadResponse(BaseModel):
     message: str
@@ -176,4 +181,13 @@ async def query_documents(request: QueryRequest):
     # Invocação da cadeia para obter a resposta
     response = retrieval_chain.invoke({"input": request.question})
 
-    return {"answer": response["answer"]}
+    sources = []
+    if "context" in response and response["context"]:
+        for doc in response["context"]:
+            # Usamos um set para evitar adicionar a mesma fonte múltiplas vezes
+            source_name = doc.metadata.get("source", "Fonte desconhecida")
+            if source_name not in {s.source for s in sources}:
+                 sources.append(SourceDocument(source=source_name, content=doc.page_content))
+
+
+    return {"answer": response["answer"], "sources": sources}
