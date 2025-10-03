@@ -10,6 +10,9 @@
 
 O **Cognita Suite** é uma aplicação web desenvolvida para a trilha de Educação do **Hackathon AI Challenge da SECCOM UFSC**. A suíte visa potencializar os estudos de alunos, oferecendo ferramentas inteligentes para correção de redações e consulta a materiais de estudo, tudo impulsionado por modelos de linguagem de ponta.
 
+<img width="1367" height="677" alt="image" src="https://github.com/user-attachments/assets/3eafcab0-9556-462a-800d-7b021ce6c3b3" />
+
+
 ## 📚 Sumário
 1. [Sobre o Projeto](#1-sobre-o-projeto)
 2. [Módulos da Suíte](#2-módulos-da-suíte)
@@ -37,6 +40,9 @@ A aplicação foi construída com um frontend em HTML, CSS e JavaScript puros, q
 - **Feedback Detalhado:** Fornece uma análise geral, nota final e um feedback construtivo para cada critério de avaliação, ajudando o aluno a identificar pontos fortes e fracos.
 - **Histórico Local:** Salva as correções no `localStorage` do navegador, permitindo que o usuário acesse seu histórico de desempenho.
 
+<img width="1367" height="677" alt="image" src="https://github.com/user-attachments/assets/f7dce579-a68b-464d-ad7a-9591d82a9a85" />
+
+
 ### Sinapse - Base de Conhecimento com RAG
 **Sinapse** é um assistente de estudos que utiliza a técnica de **Retrieval-Augmented Generation (RAG)** para responder perguntas com base em documentos fornecidos pelo usuário.
 
@@ -46,6 +52,9 @@ A aplicação foi construída com um frontend em HTML, CSS e JavaScript puros, q
 
 ## 3. Detalhes da Implementação de IA
 O coração do projeto está no uso estratégico de modelos generativos da família **Google Gemini**, orquestrados de maneiras distintas para cada módulo.
+
+<img width="1367" height="677" alt="image" src="https://github.com/user-attachments/assets/b28defde-6c23-4719-9e35-8544b7cdb68f" />
+
 
 ### IA do Grifo: Prompt Engineering e Análise Calibrada
 Para o módulo de correção de redações, a precisão e a justiça da avaliação eram cruciais. A técnica central utilizada foi o **Prompt Engineering Avançado**.
