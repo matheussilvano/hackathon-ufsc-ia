@@ -5,3 +5,5 @@ venv/
 *.pdf
 __pycache__/
 gen-lang*
+chroma_db_persistent/
+temp_uploads/
