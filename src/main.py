@@ -1,7 +1,8 @@
 import os
 import json
 import google.generativeai as genai
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Body
+from pydantic import BaseModel
 from google.cloud import vision
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -13,8 +14,8 @@ except KeyError:
 
 app = FastAPI(
     title="Corretor de Redação com IA",
-    description="API que recebe a foto de uma redação, extrai o texto e a corrige usando o Gemini para os vestibulares do ENEM e UFSC.",
-    version="2.0.0"
+    description="API que recebe a foto ou o texto de uma redação e a corrige usando o Gemini para os vestibulares do ENEM e UFSC.",
+    version="2.1.0"
 )
 
 app.add_middleware(
@@ -25,33 +26,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- Modelos Pydantic para requisições de texto ---
+class TextoEnemRequest(BaseModel):
+    texto: str
+
+class TextoUfscRequest(BaseModel):
+    texto: str
+    genero: str
+
 # --- PROMPT PARA CORREÇÃO DO ENEM ---
 PROMPT_ENEM_CORRECTOR = """
-Você é um avaliador de redações do ENEM, treinado e calibrado de acordo com a Matriz de Referência e as cartilhas oficiais do INEP. Sua função é realizar uma correção técnica, rigorosa e educativa, com um discernimento apurado para diferenciar níveis de excelência.
+Você é um avaliador de redações do ENEM, treinado e calibrado de acordo com a Matriz de Referência e as cartilhas oficiais do INEP. Sua função é realizar uma correção técnica, rigorosa e, acima de tudo, educativa.
 
-**Princípio Central:** A sua avaliação deve ser analítica e comparativa. Para cada competência, identifique as características do texto, compare-as com o exemplo de calibração fornecido e, então, enquadre-as no nível de desempenho correspondente da matriz para atribuir a nota. O feedback deve justificar esse enquadramento com exemplos do texto.
+**Princípio Central: Avaliação Justa e Proporcional**
+Seu objetivo é emular um corretor humano experiente, que busca uma avaliação precisa e justa. Penalize erros claros, mas saiba reconhecer o mérito e a intenção do texto. A meta não é encontrar o máximo de erros possível, mas sim classificar o desempenho do aluno corretamente dentro dos níveis de competência do ENEM.
+
+---
+**Diretiva Crítica: Tratamento de Erros de Digitalização (OCR)**
+O texto foi extraído de uma imagem e pode conter erros que **NÃO** foram cometidos pelo aluno. Sua principal diretiva é distinguir um erro gramatical real de um artefato de OCR.
+
+1.  **Interprete a Intenção:** Se uma palavra parece errada, mas o contexto torna a intenção do aluno óbvia, **você deve assumir que é um erro de OCR e avaliar a frase com a palavra correta.**
+2.  **Exemplos a serem IGNORADOS:** Trocas de letras (`parcels` -> `parcela`), palavras unidas/separadas, concordâncias afetadas por uma única letra (`as pessoa` -> `as pessoas`).
+3.  **Regra de Ouro:** Na dúvida se um erro é do aluno ou do OCR, **presuma a favor do aluno.** Penalize apenas os erros estruturais que são inequivocamente parte da escrita original.
 
 ---
 **EXEMPLO DE CALIBRAÇÃO (ONE-SHOT LEARNING)**
 
-**Contexto:** Você deve usar a seguinte análise de uma redação real nota 900 como sua principal referência para calibrar o seu julgamento, especialmente nas notas mais altas.
+**Contexto:** Use a análise desta redação nota 900 como sua principal referência para calibrar o julgamento.
 
-**Análise da Correção Oficial (Nota 900):**
-* **Competência 1 - Nota 160:** Indica que o texto era muito bom, mas continha 3 ou 4 falhas gramaticais ou de convenções (ex: vírgulas, crases, grafia). **Diretiva:** Seja mais rigoroso na contagem de desvios. A nota 200 é para perfeição virtual (no máximo 2 falhas).
+* **Competência 1 - Nota 160:** O texto original tinha 3 ou 4 falhas gramaticais reais (vírgulas, crases, regência).
+    * **Diretiva:** Seja rigoroso com desvios reais do aluno, após filtrar os erros de OCR. A nota 200 é para um texto com no máximo 1 ou 2 falhas leves.
 * **Competência 2 - Nota 200:** O texto abordou o tema completamente e usou repertório de forma produtiva.
-* **Competência 3 - Nota 160:** Significa que o projeto de texto era claro e os argumentos bem defendidos, mas talvez um pouco previsíveis ou muito baseados em senso comum, caracterizando "indícios de autoria" em vez de uma "autoria" plena e original. **Diretiva:** Diferencie um argumento bem colocado de um argumento verdadeiramente original e perspicaz. Não atribua 200 se a argumentação for apenas correta, mas não excelente.
-* **Competência 4 - Nota 180:** Esta nota indica uma performance quase perfeita nos mecanismos de coesão. Provavelmente, o texto usou bem os conectivos, mas com pouca variedade (repetindo "Ademais", "Nesse sentido", etc.) ou com alguma pequena inadequação. **Diretiva:** Avalie não só a presença, mas a **diversidade e a precisão** dos recursos coesivos. A repetição excessiva de conectivos impede a nota 200.
-* **Competência 5 - Nota 200:** A proposta de intervenção era completa, com todos os 5 elementos bem detalhados.
+* **Competência 3 - Nota 160:** O projeto de texto era claro e os argumentos bem defendidos, mas um pouco previsíveis ("indícios de autoria").
+    * **Diretiva:** **A nota 200 é para um projeto de texto com desenvolvimento estratégico, onde os argumentos são bem fundamentados e a defesa do ponto de vista é consistente. Não exija originalidade absoluta; a excelência está na organização e no aprofundamento das ideias. A nota 160 se aplica quando os argumentos são válidos, mas o desenvolvimento poderia ser mais aprofundado ou menos baseado em senso comum.**
+* **Competência 4 - Nota 180:** O texto usou bem os conectivos, mas com alguma repetição ou leve inadequação.
+    * **Diretiva:** **A nota 200 exige um repertório variado e bem utilizado de recursos coesivos. A nota 180 é adequada para textos com boa coesão, mas que apresentam repetição de alguns conectivos (ex: uso excessivo de "Ademais") ou imprecisões leves que não chegam a quebrar a fluidez do texto.**
+* **Competência 5 - Nota 200:** A proposta de intervenção era completa (5 elementos detalhados).
 
-**Diretiva Geral de Calibração:** Use este exemplo para ser mais crítico. A nota 1000 é para uma redação excepcional. Uma redação ótima, mas com pequenas falhas, como a do exemplo, deve pontuar entre 880-960.
+**Diretiva Geral de Calibração:**
+Use o exemplo acima como uma âncora. Ele representa um texto excelente (Nota 900) que não atinge a perfeição. Sua avaliação deve ser calibrada por essa referência: uma redação precisa ser praticamente impecável e demonstrar excelência em todas as competências para alcançar a nota 1000.
+
 ---
-
 **Instruções de Avaliação:**
 
-1.  **Análise por Níveis Calibrados:** Avalie a redação em cada competência, usando o exemplo acima para refinar sua decisão sobre a nota (0, 40, 80, 120, 160 ou 200).
-2.  **Feedback Justificado:** Cite trechos da redação para justificar a nota, explicando por que o texto se enquadra naquele nível (e não em um superior), fazendo referência implícita aos critérios de calibração.
-3.  **Tratamento de OCR:** O texto foi extraído de uma imagem. Foque na estrutura e argumentação, e não penalize erros de grafia isolados que possam ser artefatos de digitalização.
-4.  **Formato de Saída:** Sua resposta DEVE ser um objeto JSON válido, sem nenhum texto fora da estrutura JSON.
+1.  **Análise Calibrada:** Avalie cada competência usando o exemplo acima e, fundamentalmente, a **Regra de Ouro do OCR**.
+2.  **Feedback Justificado:** Cite trechos para justificar a nota. Ao apontar um erro, certifique-se de que é um erro de escrita, não de digitalização.
+3.  **Formato de Saída:** A resposta DEVE ser um objeto JSON válido, sem nenhum texto fora da estrutura.
 
 ---
 **Estrutura de Saída JSON Obrigatória:**
@@ -115,6 +135,7 @@ Você é um avaliador da banca de redação do vestibular da UFSC (Coperve), com
 **A proposta para esta redação é: Gênero Textual = {genero_textual}. A redação do aluno para análise segue abaixo:**
 """
 
+# --- Funções Auxiliares ---
 
 async def extrair_texto_imagem(foto: UploadFile):
     """Função auxiliar para extrair texto de uma imagem usando a API do Vision."""
@@ -135,50 +156,49 @@ async def extrair_texto_imagem(foto: UploadFile):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro no processamento da imagem: {str(e)}")
 
+async def gerar_correcao_gemini(prompt_completo: str):
+    """Função auxiliar para chamar a API do Gemini e processar a resposta."""
+    try:
+        model = genai.GenerativeModel('gemini-2.5-pro')
+        
+        gemini_response = model.generate_content(
+            prompt_completo,
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                temperature=0.2
+            )
+        )
+        
+        return json.loads(gemini_response.text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro na API do Gemini ou na análise da resposta: {str(e)}")
+
+# --- Endpoints para Upload de Imagem ---
 
 @app.post("/corrigir-redacao-enem/")
 async def corrigir_redacao_enem(foto: UploadFile = File(...)):
     texto_extraido = await extrair_texto_imagem(foto)
-
-    try:
-        model = genai.GenerativeModel('gemini-2.5-pro')
-        prompt_completo = f"{PROMPT_ENEM_CORRECTOR}\n\n{texto_extraido}"
-        
-        gemini_response = model.generate_content(
-            prompt_completo,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                temperature=0.2
-            )
-        )
-        
-        resultado_json = json.loads(gemini_response.text)
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro na API do Gemini ou na análise da resposta: {str(e)}")
-
+    prompt_completo = f"{PROMPT_ENEM_CORRECTOR}\n\n{texto_extraido}"
+    resultado_json = await gerar_correcao_gemini(prompt_completo)
     return resultado_json
-
 
 @app.post("/corrigir-redacao-ufsc/")
 async def corrigir_redacao_ufsc(foto: UploadFile = File(...), genero: str = Form(...)):
     texto_extraido = await extrair_texto_imagem(foto)
+    prompt_completo = PROMPT_UFSC_CORRECTOR.format(genero_textual=genero) + "\n\n" + texto_extraido
+    resultado_json = await gerar_correcao_gemini(prompt_completo)
+    return resultado_json
 
-    try:
-        model = genai.GenerativeModel('gemini-2.5-pro')
-        prompt_completo = PROMPT_UFSC_CORRECTOR.format(genero_textual=genero) + "\n\n" + texto_extraido
+# --- Endpoints para Envio de Texto ---
 
-        gemini_response = model.generate_content(
-            prompt_completo,
-            generation_config=genai.GenerationConfig(
-                response_mime_type="application/json",
-                temperature=0.2
-            )
-        )
-        
-        resultado_json = json.loads(gemini_response.text)
+@app.post("/corrigir-texto-enem/")
+async def corrigir_texto_enem(request: TextoEnemRequest):
+    prompt_completo = f"{PROMPT_ENEM_CORRECTOR}\n\n{request.texto}"
+    resultado_json = await gerar_correcao_gemini(prompt_completo)
+    return resultado_json
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro na API do Gemini ou na análise da resposta: {str(e)}")
-
+@app.post("/corrigir-texto-ufsc/")
+async def corrigir_texto_ufsc(request: TextoUfscRequest):
+    prompt_completo = PROMPT_UFSC_CORRECTOR.format(genero_textual=request.genero) + "\n\n" + request.texto
+    resultado_json = await gerar_correcao_gemini(prompt_completo)
     return resultado_json
